@@ -516,6 +516,12 @@ void llvm::createMemCpyLoopUnknownSize(
     bool CanOverlap, const TargetTransformInfo &TTI,
     std::optional<uint32_t> AtomicElementSize,
     std::optional<uint64_t> AverageTripCount) {
+  if (TTI.supportsScalableVectors()) {
+    createMemCpyAsScalableLoop(InsertBefore, SrcAddr, DstAddr, CopyLen,
+                               SrcAlign, DstAlign, SrcIsVolatile, DstIsVolatile,
+                               CanOverlap, TTI);
+    return;
+  }
   BasicBlock *PreLoopBB = InsertBefore->getParent();
   Function *ParentFunc = PreLoopBB->getParent();
   const DataLayout &DL = ParentFunc->getDataLayout();
@@ -610,6 +616,139 @@ void llvm::createMemCpyLoopUnknownSize(
     ResLoad->setAtomic(AtomicOrdering::Unordered);
     ResStore->setAtomic(AtomicOrdering::Unordered);
   }
+}
+
+// Create a call to memcpy into an optimized scalable loop
+void llvm::createMemCpyAsScalableLoop(Instruction *InsertBefore, Value *SrcAddr,
+                                      Value *DstAddr, Value *CopyLen,
+                                      Align SrcAlign, Align DstAlign,
+                                      bool SrcIsVolatile, bool DstIsVolatile,
+                                      bool CanOverlap,
+                                      const TargetTransformInfo &TTI) {
+  BasicBlock *ParentBlock = InsertBefore->getParent();
+  BasicBlock *PHBlock = ParentBlock->splitBasicBlock(InsertBefore, "mem.ph");
+  BasicBlock *LoopBlock = PHBlock->splitBasicBlock(InsertBefore, "mem.exploop");
+  BasicBlock *LoopExit =
+      LoopBlock->splitBasicBlock(InsertBefore, "mem.loopExit");
+  BasicBlock *LoopEpilog =
+      LoopExit->splitBasicBlock(InsertBefore, "mem.epilog");
+  BasicBlock *ResumeBlock =
+      LoopEpilog->splitBasicBlock(InsertBefore, "mem.resume");
+
+  // Fill in the preheader
+  BasicBlock::iterator InsertPt(ParentBlock->getTerminator());
+  IRBuilder<> Builder(&*InsertPt);
+  Module *M = ParentBlock->getModule();
+  LLVMContext &Ctx = InsertBefore->getContext();
+  MDBuilder MDB(Ctx);
+
+  // Always use a 64bit iteration counter
+  Type *IdxTy = Builder.getInt64Ty();
+
+  // Possibly zero-extend the length
+  Value *Length = CopyLen;
+  if (!Length->getType()->isIntegerTy(64)) {
+    Length = Builder.CreateZExt(Length, IdxTy);
+  }
+
+  Builder.SetInsertPoint(PHBlock->getTerminator());
+  VectorType *VecTy = VectorType::get(Builder.getInt8Ty(), 16, true);
+  Type *SrcTy = SrcAddr->getType()->getScalarType();
+  Type *DestTy = DstAddr->getType()->getScalarType();
+
+  Value *ScaledNumElts = Builder.CreateVScale(IdxTy);
+
+  Value *SafeLengthToCopy = Builder.CreateSub(Length, ScaledNumElts);
+  Value *Dest_End =
+      Builder.CreateGEP(Builder.getInt8Ty(), DstAddr, SafeLengthToCopy);
+
+  Value *LoopGuard = Builder.CreateICmpUGT(Length, ScaledNumElts);
+  Builder.CreateCondBr(LoopGuard, LoopBlock, LoopEpilog);
+  PHBlock->getTerminator()->eraseFromParent();
+
+  auto CreatePHINode = [&](Type *Ty, unsigned NumValues, BasicBlock *IncomingBB,
+                           Value *IncomingValue,
+                           BasicBlock *IncomingBB2 = nullptr,
+                           Value *IncomingValue2 = nullptr) {
+    PHINode *PHI = Builder.CreatePHI(Ty, NumValues);
+    PHI->addIncoming(IncomingValue, IncomingBB);
+    if (IncomingBB2)
+      PHI->addIncoming(IncomingValue2, IncomingBB2);
+    return PHI;
+  };
+
+  // Set Insert point to loop body
+  Builder.SetInsertPoint(LoopBlock->getTerminator());
+  PHINode *Dest = CreatePHINode(DestTy, 2, PHBlock, DstAddr);
+  PHINode *Src = CreatePHINode(SrcTy, 2, PHBlock, SrcAddr);
+
+  // Creating Load/Store for "mem.exploop"
+  LoadInst *Load =
+      Builder.CreateAlignedLoad(VecTy, Src, SrcAlign, SrcIsVolatile);
+  StoreInst *Store =
+      Builder.CreateAlignedStore(Load, Dest, DstAlign, DstIsVolatile);
+  if (!CanOverlap) {
+    MDNode *NewDomain = MDB.createAnonymousAliasScopeDomain("MemCopyDomain");
+    StringRef Name = "MemCopyAliasScope";
+    MDNode *NewScope = MDB.createAnonymousAliasScope(NewDomain, Name);
+    Load->setMetadata(LLVMContext::MD_alias_scope, MDNode::get(Ctx, NewScope));
+    // Indicate that stores don't overlap loads.
+    Store->setMetadata(LLVMContext::MD_noalias, MDNode::get(Ctx, NewScope));
+  }
+  Value *Src_Next = Builder.CreateGEP(Builder.getInt8Ty(), Src, ScaledNumElts);
+  Value *Dest_Next =
+      Builder.CreateGEP(Builder.getInt8Ty(), Dest, ScaledNumElts);
+
+  Src->addIncoming(Src_Next, LoopBlock);
+  Dest->addIncoming(Dest_Next, LoopBlock);
+
+  Value *ExitCondition = Builder.CreateICmpULT(Dest_Next, Dest_End);
+  Builder.CreateCondBr(ExitCondition, LoopBlock, LoopExit);
+  LoopBlock->getTerminator()->eraseFromParent();
+
+  Builder.SetInsertPoint(LoopExit->getTerminator());
+  Value *Zero = ConstantInt::get(IdxTy, 0, false);
+  Value *MinusOne = ConstantInt::get(IdxTy, -1, false);
+  Value *ScaleMask = Builder.CreateAdd(ScaledNumElts, MinusOne);
+  Value *MaskedLength = Builder.CreateAnd(Length, ScaleMask);
+  Value *LengthCond = Builder.CreateICmpEQ(MaskedLength, Zero);
+  Value *PendingLength =
+      Builder.CreateSelect(LengthCond, ScaledNumElts, MaskedLength);
+
+  // Creating PHI nodes for "mem.epilog"
+  Builder.SetInsertPoint(LoopEpilog->getTerminator());
+  PHINode *DestEpi =
+      CreatePHINode(DestTy, 2, PHBlock, DstAddr, LoopExit, Dest_Next);
+  PHINode *SrcEpi =
+      CreatePHINode(SrcTy, 2, PHBlock, SrcAddr, LoopExit, Src_Next);
+  PHINode *PendingLength_Epi =
+      CreatePHINode(IdxTy, 2, PHBlock, Length, LoopExit, PendingLength);
+
+  // Creating Masked Load/Store for "mem.epilog"
+  Type *BoolVecTy =
+      VectorType::get(Builder.getInt1Ty(), VecTy->getElementCount());
+  Function *ActiveMaskFunc = Intrinsic::getOrInsertDeclaration(
+      M, Intrinsic::get_active_lane_mask,
+      {BoolVecTy, PendingLength_Epi->getType()});
+
+  CallInst *Mask =
+      Builder.CreateCall(ActiveMaskFunc, {Zero, PendingLength_Epi});
+  CallInst *MaskedLoad =
+      Builder.CreateMaskedLoad(VecTy, SrcEpi, SrcAlign, Mask);
+  CallInst *MaskedStore =
+      Builder.CreateMaskedStore(MaskedLoad, DestEpi, DstAlign, Mask);
+  if (!CanOverlap) {
+    MDNode *NewDomain = MDB.createAnonymousAliasScopeDomain("MemCopyDomain");
+    StringRef Name = "MemCopyAliasScope";
+    MDNode *NewScope = MDB.createAnonymousAliasScope(NewDomain, Name);
+    MaskedLoad->setMetadata(LLVMContext::MD_alias_scope,
+                            MDNode::get(Ctx, NewScope));
+    // Indicate that stores don't overlap loads.
+    MaskedStore->setMetadata(LLVMContext::MD_noalias,
+                             MDNode::get(Ctx, NewScope));
+  }
+  LoopEpilog->getTerminator()->eraseFromParent();
+  UncondBrInst::Create(ResumeBlock, LoopEpilog);
 }
 
 // If \p Addr1 and \p Addr2 are pointers to different address spaces, create an

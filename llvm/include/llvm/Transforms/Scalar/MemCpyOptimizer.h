@@ -66,7 +66,8 @@ private:
   bool processStoreOfLoad(StoreInst *SI, LoadInst *LI, const DataLayout &DL,
                           BasicBlock::iterator &BBI);
   bool processMemSet(MemSetInst *SI, BasicBlock::iterator &BBI);
-  bool processMemCpy(MemCpyInst *M, BasicBlock::iterator &BBI);
+  bool processMemCpy(MemCpyInst *M, BasicBlock::iterator &BBI,
+                     BasicBlock::iterator &BE);
   bool processMemMove(MemMoveInst *M, BasicBlock::iterator &BBI);
   bool performCallSlotOptzn(Instruction *cpyLoad, Instruction *cpyStore,
                             Value *cpyDst, Value *cpySrc, TypeSize cpyLen,
@@ -90,6 +91,8 @@ private:
 
   void eraseInstruction(Instruction *I);
   bool iterateOnFunction(Function &F);
+
+  SmallPtrSet<MemCpyInst *, 32> VersionedMemCpy;
 };
 
 } // end namespace llvm
