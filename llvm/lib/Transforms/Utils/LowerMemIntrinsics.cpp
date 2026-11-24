@@ -656,7 +656,10 @@ void llvm::createMemCpyAsScalableLoop(Instruction *InsertBefore, Value *SrcAddr,
   Type *SrcTy = SrcAddr->getType()->getScalarType();
   Type *DestTy = DstAddr->getType()->getScalarType();
 
-  Value *ScaledNumElts = Builder.CreateVScale(IdxTy);
+  Value *VScale = Builder.CreateVScale(IdxTy);
+  Value *ScaledNumElts = Builder.CreateNUWMul(
+      VScale,
+      ConstantInt::get(IdxTy, VecTy->getElementCount().getKnownMinValue()));
 
   Value *SafeLengthToCopy = Builder.CreateSub(Length, ScaledNumElts);
   Value *Dest_End =

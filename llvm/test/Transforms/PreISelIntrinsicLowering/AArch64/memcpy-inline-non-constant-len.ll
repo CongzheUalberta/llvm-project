@@ -20,29 +20,30 @@ define void @memcpy_x(ptr %dst, ptr %src, i64 %x) nounwind {
 ; CHECK-NEXT:    br label %[[MEM_PH:.*]]
 ; CHECK:       [[MEM_PH]]:
 ; CHECK-NEXT:    [[TMP1:%.*]] = call i64 @llvm.vscale.i64()
-; CHECK-NEXT:    [[TMP3:%.*]] = sub i64 [[X]], [[TMP1]]
+; CHECK-NEXT:    [[TMP2:%.*]] = mul nuw i64 [[TMP1]], 16
+; CHECK-NEXT:    [[TMP3:%.*]] = sub i64 [[X]], [[TMP2]]
 ; CHECK-NEXT:    [[TMP4:%.*]] = getelementptr i8, ptr [[DST]], i64 [[TMP3]]
-; CHECK-NEXT:    [[TMP5:%.*]] = icmp ugt i64 [[X]], [[TMP1]]
+; CHECK-NEXT:    [[TMP5:%.*]] = icmp ugt i64 [[X]], [[TMP2]]
 ; CHECK-NEXT:    br i1 [[TMP5]], label %[[MEM_EXPLOOP:.*]], label %[[MEM_EPILOG:.*]]
 ; CHECK:       [[MEM_EXPLOOP]]:
 ; CHECK-NEXT:    [[TMP6:%.*]] = phi ptr [ [[DST]], %[[MEM_PH]] ], [ [[TMP11:%.*]], %[[MEM_EXPLOOP]] ]
-; CHECK-NEXT:    [[TMP7:%.*]] = phi ptr [ [[SRC]], %[[MEM_PH]] ], [ [[TMP8:%.*]], %[[MEM_EXPLOOP]] ]
+; CHECK-NEXT:    [[TMP7:%.*]] = phi ptr [ [[SRC]], %[[MEM_PH]] ], [ [[TMP10:%.*]], %[[MEM_EXPLOOP]] ]
 ; CHECK-NEXT:    [[TMP9:%.*]] = load <vscale x 16 x i8>, ptr [[TMP7]], align 1
 ; CHECK-NEXT:    store <vscale x 16 x i8> [[TMP9]], ptr [[TMP6]], align 1
-; CHECK-NEXT:    [[TMP8]] = getelementptr i8, ptr [[TMP7]], i64 [[TMP1]]
-; CHECK-NEXT:    [[TMP11]] = getelementptr i8, ptr [[TMP6]], i64 [[TMP1]]
+; CHECK-NEXT:    [[TMP10]] = getelementptr i8, ptr [[TMP7]], i64 [[TMP2]]
+; CHECK-NEXT:    [[TMP11]] = getelementptr i8, ptr [[TMP6]], i64 [[TMP2]]
 ; CHECK-NEXT:    [[TMP13:%.*]] = icmp ult ptr [[TMP11]], [[TMP4]]
 ; CHECK-NEXT:    br i1 [[TMP13]], label %[[MEM_EXPLOOP]], label %[[MEM_LOOPEXIT:.*]]
 ; CHECK:       [[MEM_LOOPEXIT]]:
-; CHECK-NEXT:    [[TMP12:%.*]] = add i64 [[TMP1]], -1
+; CHECK-NEXT:    [[TMP12:%.*]] = add i64 [[TMP2]], -1
 ; CHECK-NEXT:    [[TMP26:%.*]] = and i64 [[X]], [[TMP12]]
 ; CHECK-NEXT:    [[TMP30:%.*]] = icmp eq i64 [[TMP26]], 0
-; CHECK-NEXT:    [[TMP14:%.*]] = select i1 [[TMP30]], i64 [[TMP1]], i64 [[TMP26]]
+; CHECK-NEXT:    [[TMP28:%.*]] = select i1 [[TMP30]], i64 [[TMP2]], i64 [[TMP26]]
 ; CHECK-NEXT:    br label %[[MEM_EPILOG]]
 ; CHECK:       [[MEM_EPILOG]]:
 ; CHECK-NEXT:    [[TMP15:%.*]] = phi ptr [ [[DST]], %[[MEM_PH]] ], [ [[TMP11]], %[[MEM_LOOPEXIT]] ]
-; CHECK-NEXT:    [[TMP18:%.*]] = phi ptr [ [[SRC]], %[[MEM_PH]] ], [ [[TMP8]], %[[MEM_LOOPEXIT]] ]
-; CHECK-NEXT:    [[TMP16:%.*]] = phi i64 [ [[X]], %[[MEM_PH]] ], [ [[TMP14]], %[[MEM_LOOPEXIT]] ]
+; CHECK-NEXT:    [[TMP18:%.*]] = phi ptr [ [[SRC]], %[[MEM_PH]] ], [ [[TMP10]], %[[MEM_LOOPEXIT]] ]
+; CHECK-NEXT:    [[TMP16:%.*]] = phi i64 [ [[X]], %[[MEM_PH]] ], [ [[TMP28]], %[[MEM_LOOPEXIT]] ]
 ; CHECK-NEXT:    [[TMP17:%.*]] = call <vscale x 16 x i1> @llvm.get.active.lane.mask.nxv16i1.i64(i64 0, i64 [[TMP16]])
 ; CHECK-NEXT:    [[TMP20:%.*]] = call <vscale x 16 x i8> @llvm.masked.load.nxv16i8.p0(ptr align 1 [[TMP18]], <vscale x 16 x i1> [[TMP17]], <vscale x 16 x i8> poison)
 ; CHECK-NEXT:    call void @llvm.masked.store.nxv16i8.p0(<vscale x 16 x i8> [[TMP20]], ptr align 1 [[TMP15]], <vscale x 16 x i1> [[TMP17]])
@@ -51,29 +52,30 @@ define void @memcpy_x(ptr %dst, ptr %src, i64 %x) nounwind {
 ; CHECK-NEXT:    br label %[[MEM_PH1:.*]]
 ; CHECK:       [[MEM_PH1]]:
 ; CHECK-NEXT:    [[TMP19:%.*]] = call i64 @llvm.vscale.i64()
-; CHECK-NEXT:    [[TMP21:%.*]] = sub i64 [[X]], [[TMP19]]
+; CHECK-NEXT:    [[TMP32:%.*]] = mul nuw i64 [[TMP19]], 16
+; CHECK-NEXT:    [[TMP21:%.*]] = sub i64 [[X]], [[TMP32]]
 ; CHECK-NEXT:    [[TMP22:%.*]] = getelementptr i8, ptr [[DST]], i64 [[TMP21]]
-; CHECK-NEXT:    [[TMP23:%.*]] = icmp ugt i64 [[X]], [[TMP19]]
+; CHECK-NEXT:    [[TMP23:%.*]] = icmp ugt i64 [[X]], [[TMP32]]
 ; CHECK-NEXT:    br i1 [[TMP23]], label %[[MEM_EXPLOOP2:.*]], label %[[MEM_EPILOG4:.*]]
 ; CHECK:       [[MEM_EXPLOOP2]]:
 ; CHECK-NEXT:    [[TMP24:%.*]] = phi ptr [ [[DST]], %[[MEM_PH1]] ], [ [[TMP29:%.*]], %[[MEM_EXPLOOP2]] ]
-; CHECK-NEXT:    [[TMP25:%.*]] = phi ptr [ [[SRC]], %[[MEM_PH1]] ], [ [[TMP28:%.*]], %[[MEM_EXPLOOP2]] ]
+; CHECK-NEXT:    [[TMP25:%.*]] = phi ptr [ [[SRC]], %[[MEM_PH1]] ], [ [[TMP33:%.*]], %[[MEM_EXPLOOP2]] ]
 ; CHECK-NEXT:    [[TMP27:%.*]] = load volatile <vscale x 16 x i8>, ptr [[TMP25]], align 1
 ; CHECK-NEXT:    store volatile <vscale x 16 x i8> [[TMP27]], ptr [[TMP24]], align 1
-; CHECK-NEXT:    [[TMP28]] = getelementptr i8, ptr [[TMP25]], i64 [[TMP19]]
-; CHECK-NEXT:    [[TMP29]] = getelementptr i8, ptr [[TMP24]], i64 [[TMP19]]
+; CHECK-NEXT:    [[TMP33]] = getelementptr i8, ptr [[TMP25]], i64 [[TMP32]]
+; CHECK-NEXT:    [[TMP29]] = getelementptr i8, ptr [[TMP24]], i64 [[TMP32]]
 ; CHECK-NEXT:    [[TMP31:%.*]] = icmp ult ptr [[TMP29]], [[TMP22]]
 ; CHECK-NEXT:    br i1 [[TMP31]], label %[[MEM_EXPLOOP2]], label %[[MEM_LOOPEXIT3:.*]]
 ; CHECK:       [[MEM_LOOPEXIT3]]:
-; CHECK-NEXT:    [[TMP38:%.*]] = add i64 [[TMP19]], -1
+; CHECK-NEXT:    [[TMP38:%.*]] = add i64 [[TMP32]], -1
 ; CHECK-NEXT:    [[TMP39:%.*]] = and i64 [[X]], [[TMP38]]
 ; CHECK-NEXT:    [[TMP40:%.*]] = icmp eq i64 [[TMP39]], 0
-; CHECK-NEXT:    [[TMP33:%.*]] = select i1 [[TMP40]], i64 [[TMP19]], i64 [[TMP39]]
+; CHECK-NEXT:    [[TMP42:%.*]] = select i1 [[TMP40]], i64 [[TMP32]], i64 [[TMP39]]
 ; CHECK-NEXT:    br label %[[MEM_EPILOG4]]
 ; CHECK:       [[MEM_EPILOG4]]:
 ; CHECK-NEXT:    [[TMP36:%.*]] = phi ptr [ [[DST]], %[[MEM_PH1]] ], [ [[TMP29]], %[[MEM_LOOPEXIT3]] ]
-; CHECK-NEXT:    [[TMP37:%.*]] = phi ptr [ [[SRC]], %[[MEM_PH1]] ], [ [[TMP28]], %[[MEM_LOOPEXIT3]] ]
-; CHECK-NEXT:    [[TMP34:%.*]] = phi i64 [ [[X]], %[[MEM_PH1]] ], [ [[TMP33]], %[[MEM_LOOPEXIT3]] ]
+; CHECK-NEXT:    [[TMP37:%.*]] = phi ptr [ [[SRC]], %[[MEM_PH1]] ], [ [[TMP33]], %[[MEM_LOOPEXIT3]] ]
+; CHECK-NEXT:    [[TMP34:%.*]] = phi i64 [ [[X]], %[[MEM_PH1]] ], [ [[TMP42]], %[[MEM_LOOPEXIT3]] ]
 ; CHECK-NEXT:    [[TMP35:%.*]] = call <vscale x 16 x i1> @llvm.get.active.lane.mask.nxv16i1.i64(i64 0, i64 [[TMP34]])
 ; CHECK-NEXT:    [[TMP41:%.*]] = call <vscale x 16 x i8> @llvm.masked.load.nxv16i8.p0(ptr align 1 [[TMP37]], <vscale x 16 x i1> [[TMP35]], <vscale x 16 x i8> poison)
 ; CHECK-NEXT:    call void @llvm.masked.store.nxv16i8.p0(<vscale x 16 x i8> [[TMP41]], ptr align 1 [[TMP36]], <vscale x 16 x i1> [[TMP35]])
